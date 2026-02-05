@@ -3,6 +3,12 @@
 import { useEffect, useState } from "react";
 
 /* ===============================
+   TYPES
+================================ */
+type MsgRole = "user" | "assistant";
+type Msg = { role: MsgRole; text: string };
+
+/* ===============================
    CONFIG
 ================================ */
 const MAX_USER_MESSAGES = 8;
@@ -15,13 +21,21 @@ const LOCK_MS = LOCK_HOURS * 60 * 60 * 1000;
 function getLockUntil(): number {
   if (typeof window === "undefined") return 0;
   const raw = localStorage.getItem("bt_lock_until");
-  const parsed = raw ? Number(raw) : 0;
-  return Number.isFinite(parsed) ? parsed : 0;
+  const n = raw ? Number(raw) : 0;
+  return Number.isFinite(n) ? n : 0;
 }
 
 function setLockUntil(ts: number) {
   if (typeof window === "undefined") return;
   localStorage.setItem("bt_lock_until", String(ts));
+}
+
+function formatLockTime(ms: number): string {
+  try {
+    return new Date(ms).toLocaleString();
+  } catch {
+    return String(ms);
+  }
 }
 
 /* ===============================
@@ -30,18 +44,16 @@ function setLockUntil(ts: number) {
 export default function Page() {
   const [inviteCode, setInviteCode] = useState("");
   const [input, setInput] = useState("");
-  const [log, setLog] = useState<
-    Array<{ role: "user" | "assistant"; text: string }>
-  >([]);
+  const [log, setLog] = useState<Msg[]>([]);
   const [sending, setSending] = useState(false);
-  const [lockUntil, setLockUntilState] = useState(0);
+  const [lockUntil, setLockUntilState] = useState<number>(0);
 
   useEffect(() => {
     setLockUntilState(getLockUntil());
   }, []);
 
   const isLocked: boolean = lockUntil > Date.now();
-  const userMessageCount = log.filter(m => m.role === "user").length;
+  const userMessageCount: number = log.filter((m) => m.role === "user").length;
 
   /* ===============================
      SESSION CONTROL
@@ -59,14 +71,17 @@ export default function Page() {
     if (!input.trim() || sending) return;
     if (isLocked) return;
 
+    // Stop sending if they already hit the limit
+    if (userMessageCount >= MAX_USER_MESSAGES) return;
+
     const userText = input.trim();
     setInput("");
     setSending(true);
 
-    const newLog = [...log, { role: "user", text: userText }];
+    // IMPORTANT: type this so role stays "user" not string
+    const newLog: Msg[] = [...log, { role: "user", text: userText }];
     setLog(newLog);
 
-    // If this is the FINAL user message, we will close the session
     const isFinalMessage = userMessageCount + 1 >= MAX_USER_MESSAGES;
 
     try {
@@ -83,8 +98,7 @@ export default function Page() {
       });
 
       const data = await res.json();
-
-      let assistantText = data.output ?? "No response.";
+      let assistantText: string = data.output ?? "No response.";
 
       if (isFinalMessage) {
         assistantText =
@@ -96,12 +110,9 @@ export default function Page() {
         setLockUntilState(until);
       }
 
-      setLog(l => [...l, { role: "assistant", text: assistantText }]);
+      setLog((l) => [...l, { role: "assistant", text: assistantText }]);
     } catch {
-      setLog(l => [
-        ...l,
-        { role: "assistant", text: "Network error." },
-      ]);
+      setLog((l) => [...l, { role: "assistant", text: "Network error." }]);
     } finally {
       setSending(false);
     }
@@ -129,7 +140,7 @@ export default function Page() {
           }}
           placeholder="Invite code"
           value={inviteCode}
-          onChange={e => setInviteCode(e.target.value)}
+          onChange={(e) => setInviteCode(e.target.value)}
         />
 
         <button
@@ -148,6 +159,22 @@ export default function Page() {
         </button>
       </div>
 
+      {isLocked && (
+        <div
+          style={{
+            border: "1px solid #444",
+            borderRadius: 12,
+            padding: 12,
+            marginBottom: 12,
+            opacity: 0.85,
+            lineHeight: 1.5,
+          }}
+        >
+          <div style={{ fontWeight: 700 }}>Session locked</div>
+          <div>New session available after: {formatLockTime(lockUntil)}</div>
+        </div>
+      )}
+
       <div
         style={{
           border: "1px solid #333",
@@ -163,18 +190,13 @@ export default function Page() {
             <p>
               This is a deliberately limited reflection tool.
               <br />
-              It does not give advice, reassurance, or solutions.
+              It does not give advice, reassurance, or direction.
               <br />
               You may write freely. Responses will be brief and neutral.
             </p>
             <p style={{ marginTop: 8, fontSize: 14 }}>
               Messages this session: 0 / {MAX_USER_MESSAGES}
             </p>
-            {isLocked && (
-              <p style={{ marginTop: 8, fontSize: 14 }}>
-                A new session will be available later.
-              </p>
-            )}
           </div>
         ) : (
           <>
@@ -202,18 +224,14 @@ export default function Page() {
             flex: 1,
           }}
           rows={3}
-          placeholder={
-            isLocked
-              ? "Session locked."
-              : "Write here…"
-          }
+          placeholder={isLocked ? "Session locked." : "Write here…"}
           value={input}
-          onChange={e => setInput(e.target.value)}
-          disabled={sending || isLocked}
+          onChange={(e) => setInput(e.target.value)}
+          disabled={sending || isLocked || userMessageCount >= MAX_USER_MESSAGES}
         />
         <button
           onClick={send}
-          disabled={sending || isLocked}
+          disabled={sending || isLocked || userMessageCount >= MAX_USER_MESSAGES}
           style={{
             padding: "10px 14px",
             borderRadius: 10,
