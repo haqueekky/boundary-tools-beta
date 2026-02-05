@@ -1,197 +1,230 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
-type Msg = { role: "user" | "assistant"; text: string };
-
+/* ===============================
+   CONFIG
+================================ */
 const MAX_USER_MESSAGES = 8;
+const LOCK_HOURS = 24;
+const LOCK_MS = LOCK_HOURS * 60 * 60 * 1000;
 
-function formatLocalTime(ms: number) {
-  try {
-    return new Date(ms).toLocaleString();
-  } catch {
-    return String(ms);
-  }
+/* ===============================
+   STORAGE HELPERS
+================================ */
+function getLockUntil(): number {
+  if (typeof window === "undefined") return 0;
+  const raw = localStorage.getItem("bt_lock_until");
+  const parsed = raw ? Number(raw) : 0;
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function setLockUntil(ts: number) {
+  if (typeof window === "undefined") return;
+  localStorage.setItem("bt_lock_until", String(ts));
+}
+
+/* ===============================
+   PAGE
+================================ */
 export default function Page() {
   const [inviteCode, setInviteCode] = useState("");
   const [input, setInput] = useState("");
-  const [log, setLog] = useState<Msg[]>([]);
+  const [log, setLog] = useState<
+    Array<{ role: "user" | "assistant"; text: string }>
+  >([]);
   const [sending, setSending] = useState(false);
-
-  // UI lock (mirrors server lock). Server is still authoritative.
-  const [lockUntil, setLockUntil] = useState<number>(0);
+  const [lockUntil, setLockUntilState] = useState(0);
 
   useEffect(() => {
-    const stored = Number(localStorage.getItem("bt_lock_until") || 0);
-    if (stored) setLockUntil(stored);
+    setLockUntilState(getLockUntil());
   }, []);
 
-  const now = Date.now();
-  const isLocked = lockUntil && now < lockUntil;
+  const isLocked: boolean = lockUntil > Date.now();
+  const userMessageCount = log.filter(m => m.role === "user").length;
 
-  const userMessageCount = useMemo(
-    () => log.filter((m) => m.role === "user").length,
-    [log]
-  );
-
-  const sessionEndedByCount = userMessageCount >= MAX_USER_MESSAGES;
-
-  async function send() {
-    if (!input.trim() || sending || isLocked || sessionEndedByCount) return;
-
-    const text = input.trim();
-    setInput("");
-    setSending(true);
-
-    setLog((l) => [...l, { role: "user", text }]);
-
-    const res = await fetch("/api/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        inviteCode,
-        userText: text,
-        userMessageCount: userMessageCount + 1, // includes current message
-      }),
-    });
-
-    const data = await res.json();
-
-    // If API returns lockUntil, store it for UI persistence
-    if (data?.lockUntil) {
-      setLockUntil(Number(data.lockUntil));
-      localStorage.setItem("bt_lock_until", String(data.lockUntil));
-    }
-
-    setLog((l) => [
-      ...l,
-      { role: "assistant", text: data.output || `Error: ${data.error || res.status}` },
-    ]);
-
-    setSending(false);
-  }
-
+  /* ===============================
+     SESSION CONTROL
+  ================================ */
   function resetSession() {
-    if (isLocked) return; // UI prevention; server also prevents actual usage
+    if (isLocked) return;
     setLog([]);
     setInput("");
   }
 
+  /* ===============================
+     SEND MESSAGE
+  ================================ */
+  async function send() {
+    if (!input.trim() || sending) return;
+    if (isLocked) return;
+
+    const userText = input.trim();
+    setInput("");
+    setSending(true);
+
+    const newLog = [...log, { role: "user", text: userText }];
+    setLog(newLog);
+
+    // If this is the FINAL user message, we will close the session
+    const isFinalMessage = userMessageCount + 1 >= MAX_USER_MESSAGES;
+
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tool: "expression",
+          inviteCode,
+          userText,
+          messageCount: userMessageCount + 1,
+          closing: isFinalMessage,
+        }),
+      });
+
+      const data = await res.json();
+
+      let assistantText = data.output ?? "No response.";
+
+      if (isFinalMessage) {
+        assistantText =
+          assistantText +
+          "\n\nWe’ll leave it there. You can start another session if and when you choose.";
+
+        const until = Date.now() + LOCK_MS;
+        setLockUntil(until);
+        setLockUntilState(until);
+      }
+
+      setLog(l => [...l, { role: "assistant", text: assistantText }]);
+    } catch {
+      setLog(l => [
+        ...l,
+        { role: "assistant", text: "Network error." },
+      ]);
+    } finally {
+      setSending(false);
+    }
+  }
+
+  /* ===============================
+     UI
+  ================================ */
   return (
-    <main style={{ maxWidth: 760, margin: "40px auto", color: "white" }}>
-      <h1 style={{ marginBottom: 12 }}>Boundary Tools — Expression</h1>
+    <main style={{ padding: 24, maxWidth: 900, margin: "0 auto", color: "white" }}>
+      <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 16 }}>
+        Boundary Tools — Beta
+      </h1>
 
-      <input
-        placeholder="Invite code"
-        value={inviteCode}
-        onChange={(e) => setInviteCode(e.target.value)}
-        style={{ width: "100%", padding: 10, marginBottom: 14 }}
-      />
-
-      {isLocked && (
-        <div
+      <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+        <input
           style={{
-            border: "1px solid #555",
-            borderRadius: 12,
-            padding: 12,
-            marginBottom: 12,
-            opacity: 0.9,
-            lineHeight: 1.5,
+            padding: "10px 12px",
+            borderRadius: 10,
+            border: "1px solid #333",
+            background: "transparent",
+            color: "white",
+            flex: 1,
+            minWidth: 220,
           }}
-        >
-          <div style={{ fontWeight: 700 }}>Session locked</div>
-          <div>
-            You can start a new session after:{" "}
-            <span style={{ fontWeight: 700 }}>{formatLocalTime(lockUntil)}</span>
-          </div>
-        </div>
-      )}
-
-      <div
-        style={{
-          border: "1px solid #444",
-          borderRadius: 12,
-          padding: 14,
-          minHeight: 260,
-          marginBottom: 12,
-        }}
-      >
-        {log.length === 0 ? (
-          <div style={{ opacity: 0.85, lineHeight: 1.5 }}>
-            <div style={{ fontWeight: 700 }}>Boundary Tool: Expression</div>
-
-            <p>This is a limited reflection space.</p>
-            <p>It does not give advice, reassurance, or direction.</p>
-
-            <p>
-              You can write whatever is on your mind, in your own words. The tool
-              will reflect one central tension and then stop.
-            </p>
-
-            <p>When you’re ready, begin.</p>
-
-            <div style={{ marginTop: 12, fontSize: 14, opacity: 0.7 }}>
-              User messages: {userMessageCount}/{MAX_USER_MESSAGES}
-            </div>
-          </div>
-        ) : (
-          <>
-            {log.map((m, i) => (
-              <div key={i} style={{ marginBottom: 10 }}>
-                <div style={{ fontWeight: 700 }}>{m.role}</div>
-                <div style={{ whiteSpace: "pre-wrap" }}>{m.text}</div>
-              </div>
-            ))}
-            <div style={{ fontSize: 14, opacity: 0.7 }}>
-              User messages: {userMessageCount}/{MAX_USER_MESSAGES}
-            </div>
-          </>
-        )}
-      </div>
-
-      <textarea
-        rows={3}
-        placeholder={
-          isLocked
-            ? "Locked for 24 hours."
-            : sessionEndedByCount
-            ? "Session ended."
-            : "Type…"
-        }
-        value={input}
-        onChange={(e) => setInput(e.target.value)}
-        disabled={isLocked || sessionEndedByCount}
-        style={{ width: "100%", padding: 10, borderRadius: 10 }}
-      />
-
-      <div style={{ marginTop: 10 }}>
-        <button
-          onClick={send}
-          disabled={sending || isLocked || sessionEndedByCount}
-          style={{ padding: "10px 14px", borderRadius: 10 }}
-        >
-          {isLocked
-            ? "Locked"
-            : sessionEndedByCount
-            ? "Session ended"
-            : sending
-            ? "Sending…"
-            : "Send"}
-        </button>
+          placeholder="Invite code"
+          value={inviteCode}
+          onChange={e => setInviteCode(e.target.value)}
+        />
 
         <button
           onClick={resetSession}
           disabled={isLocked}
           style={{
-            marginLeft: 10,
             padding: "10px 14px",
             borderRadius: 10,
-            opacity: isLocked ? 0.5 : 1,
+            border: "1px solid #333",
+            background: isLocked ? "#222" : "transparent",
+            color: "white",
+            cursor: isLocked ? "not-allowed" : "pointer",
           }}
         >
           New session
+        </button>
+      </div>
+
+      <div
+        style={{
+          border: "1px solid #333",
+          borderRadius: 12,
+          padding: 16,
+          minHeight: 320,
+          marginBottom: 14,
+        }}
+      >
+        {log.length === 0 ? (
+          <div style={{ opacity: 0.75 }}>
+            <div style={{ fontWeight: 700 }}>Boundary Tool: Expression</div>
+            <p>
+              This is a deliberately limited reflection tool.
+              <br />
+              It does not give advice, reassurance, or solutions.
+              <br />
+              You may write freely. Responses will be brief and neutral.
+            </p>
+            <p style={{ marginTop: 8, fontSize: 14 }}>
+              Messages this session: 0 / {MAX_USER_MESSAGES}
+            </p>
+            {isLocked && (
+              <p style={{ marginTop: 8, fontSize: 14 }}>
+                A new session will be available later.
+              </p>
+            )}
+          </div>
+        ) : (
+          <>
+            {log.map((m, i) => (
+              <div key={i} style={{ marginBottom: 12 }}>
+                <div style={{ fontWeight: 700 }}>{m.role}</div>
+                <div style={{ whiteSpace: "pre-wrap" }}>{m.text}</div>
+              </div>
+            ))}
+            <div style={{ fontSize: 14, opacity: 0.75 }}>
+              Messages this session: {userMessageCount} / {MAX_USER_MESSAGES}
+            </div>
+          </>
+        )}
+      </div>
+
+      <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+        <textarea
+          style={{
+            padding: "10px 12px",
+            borderRadius: 10,
+            border: "1px solid #333",
+            background: "transparent",
+            color: "white",
+            flex: 1,
+          }}
+          rows={3}
+          placeholder={
+            isLocked
+              ? "Session locked."
+              : "Write here…"
+          }
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          disabled={sending || isLocked}
+        />
+        <button
+          onClick={send}
+          disabled={sending || isLocked}
+          style={{
+            padding: "10px 14px",
+            borderRadius: 10,
+            border: "1px solid #333",
+            background: "white",
+            color: "black",
+            cursor: sending || isLocked ? "not-allowed" : "pointer",
+            fontWeight: 700,
+          }}
+        >
+          {sending ? "Sending…" : "Send"}
         </button>
       </div>
     </main>
