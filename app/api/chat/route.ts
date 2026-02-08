@@ -2,134 +2,101 @@ import OpenAI from "openai";
 import { NextResponse } from "next/server";
 import { PROMPTS } from "@/lib/prompts";
 
+type Body = {
+  tool?: keyof typeof PROMPTS;
+  inviteCode?: string;
+  userText: string;
+
+  // ✅ NEW: the UI will send this; but we treat it as optional to avoid crashes
+  sessionStartMs?: number;
+
+  // optional counters (client-side)
+  userMessageCount?: number;
+};
+
+const client = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+  timeout: 20000,
+});
+
+// You can also enforce on the server if you want.
 const MAX_USER_MESSAGES = 8;
-const LOCK_HOURS = 24;
-const LOCK_MS = LOCK_HOURS * 60 * 60 * 1000;
+const SESSION_MINUTES = 15;
 
-function parseCookies(cookieHeader: string | null) {
-  const out: Record<string, string> = {};
-  if (!cookieHeader) return out;
+function nowMs() {
+  return Date.now();
+}
 
-  for (const part of cookieHeader.split(";")) {
-    const [k, ...rest] = part.trim().split("=");
-    if (!k) continue;
-    out[k] = decodeURIComponent(rest.join("=") || "");
-  }
-  return out;
+function msFromMinutes(m: number) {
+  return m * 60 * 1000;
 }
 
 export async function POST(req: Request) {
   try {
-    // 1) Enforce 24h lock (server-side, authoritative)
-    const cookieHeader = req.headers.get("cookie");
-    const cookies = parseCookies(cookieHeader);
+    const body = (await req.json()) as Body;
 
-    const lockUntil = Number(cookies.bt_lock_until || 0);
-    const now = Date.now();
-
-    if (lockUntil && now < lockUntil) {
-      // Locked: do not call the model
-      return NextResponse.json(
-        {
-          output:
-            "We’ll leave it there.\n\nYou can start another session if and when you choose.",
-          lockUntil,
-          locked: true,
-        },
-        { status: 429 }
-      );
-    }
-
-    // 2) Normal API key check
-    if (!process.env.OPENAI_API_KEY) {
-      return NextResponse.json(
-        { error: "OPENAI_API_KEY missing" },
-        { status: 500 }
-      );
-    }
-
-    const body = await req.json();
-    const userText = (body.userText || "").trim();
-    const userMessageCount = Number(body.userMessageCount || 0);
-
+    const userText = (body.userText ?? "").trim();
     if (!userText) {
       return NextResponse.json({ error: "Empty message" }, { status: 400 });
     }
 
-    // Invite-only gate
-    if (
-      process.env.INVITE_CODE &&
-      body.inviteCode !== process.env.INVITE_CODE
-    ) {
-      return NextResponse.json(
-        { error: "Invalid invite code" },
-        { status: 401 }
-      );
+    // Invite code check (only if you set INVITE_CODE in env)
+    if (process.env.INVITE_CODE && body.inviteCode !== process.env.INVITE_CODE) {
+      return NextResponse.json({ error: "Invalid invite code" }, { status: 401 });
     }
 
-    // Hard stop: no model call if they’re already over the limit
-    if (userMessageCount > MAX_USER_MESSAGES) {
-      const res = NextResponse.json({
-        output:
-          "We’ll leave it there.\n\nYou can start another session if and when you choose.",
-        locked: false,
+    const tool = body.tool ?? "expression";
+    const system = PROMPTS[tool];
+    if (!system) {
+      return NextResponse.json({ error: "Unknown tool" }, { status: 400 });
+    }
+
+    // ✅ Session start: do NOT throw if missing.
+    // If the client doesn't send it for some reason, we safely infer it.
+    const sessionStartMs =
+      typeof body.sessionStartMs === "number" && Number.isFinite(body.sessionStartMs)
+        ? body.sessionStartMs
+        : nowMs();
+
+    // ✅ Enforce 15-minute timer server-side (prevents client bypass)
+    const deadline = sessionStartMs + msFromMinutes(SESSION_MINUTES);
+    if (nowMs() >= deadline) {
+      return NextResponse.json({
+        output: "We’ll leave it there. You can start another session if and when you choose.",
+        closed: true,
+        reason: "time",
       });
-      return res;
     }
 
-    const client = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY,
-      timeout: 20000,
-    });
+    // ✅ Enforce message cap server-side (prevents client bypass)
+    if (typeof body.userMessageCount === "number" && body.userMessageCount >= MAX_USER_MESSAGES) {
+      return NextResponse.json({
+        output: "We’ll leave it there. You can start another session if and when you choose.",
+        closed: true,
+        reason: "count",
+      });
+    }
 
-    const isFinalTurn = userMessageCount === MAX_USER_MESSAGES;
-
-    const systemPrompt = isFinalTurn
-      ? `${PROMPTS.expression}
-
-FINAL TURN RULE:
-- This is the last message of the session.
-- Write ONE short, neutral acknowledgement of the user’s last message.
-- Do NOT reassure, advise, validate, or suggest next steps.
-- Keep it to one sentence.
-- Do not mention limits or rules.`
-      : PROMPTS.expression;
-
-    const response = await client.responses.create({
-      model: "gpt-4.1-mini",
+    const resp = await client.responses.create({
+      model: process.env.OPENAI_MODEL || "gpt-5.2",
       input: [
-        { role: "system", content: systemPrompt },
+        { role: "system", content: system },
         { role: "user", content: userText },
       ],
     });
 
-    const text = (response.output_text || "").trim();
-
-    // 3) On the final turn, set the 24h lock cookie
-    if (isFinalTurn) {
-      const newLockUntil = Date.now() + LOCK_MS;
-
-      const res = NextResponse.json({
-        output: `${text}\n\nWe’ll leave it there.\n\nYou can start another session if and when you choose.`,
-        lockUntil: newLockUntil,
-        locked: true,
-      });
-
-      // Cookie visible to server; UI will also store lock in localStorage for display.
-      // SameSite=Lax is fine for your use-case.
-      res.headers.append(
-        "Set-Cookie",
-        `bt_lock_until=${encodeURIComponent(
-          String(newLockUntil)
-        )}; Path=/; Max-Age=${LOCK_MS / 1000}; SameSite=Lax`
-      );
-
-      return res;
-    }
-
-    return NextResponse.json({ output: text, locked: false });
+    return NextResponse.json({
+      output: resp.output_text ?? "",
+      closed: false,
+      sessionStartMs, // return for debugging if needed
+    });
   } catch (err: any) {
-    console.error(err);
-    return NextResponse.json({ error: "Server error" }, { status: 500 });
+    // Helpful server logs without exposing secrets
+    console.error("api/chat error:", err?.message || err);
+
+    return NextResponse.json(
+      { error: err?.message || "Server error" },
+      { status: 500 }
+    );
   }
 }
