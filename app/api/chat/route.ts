@@ -7,10 +7,10 @@ type Body = {
   inviteCode?: string;
   userText: string;
 
-  // ✅ NEW: the UI will send this; but we treat it as optional to avoid crashes
+  // Optional but recommended (client sends it)
   sessionStartMs?: number;
 
-  // optional counters (client-side)
+  // Optional counter from client so server can close exactly on message 8
   userMessageCount?: number;
 };
 
@@ -19,7 +19,6 @@ const client = new OpenAI({
   timeout: 20000,
 });
 
-// You can also enforce on the server if you want.
 const MAX_USER_MESSAGES = 8;
 const SESSION_MINUTES = 15;
 
@@ -30,6 +29,24 @@ function nowMs() {
 function msFromMinutes(m: number) {
   return m * 60 * 1000;
 }
+
+/**
+ * Neutral acknowledgement:
+ * - short
+ * - no advice
+ * - no reassurance
+ * - lightly references what was said without reprinting everything
+ */
+function acknowledge(userText: string) {
+  const cleaned = userText.replace(/\s+/g, " ").trim();
+  const snippet = cleaned.length > 90 ? cleaned.slice(0, 90) + "…" : cleaned;
+
+  // Neutral “touch” line that doesn’t validate conclusions or advise.
+  // It acknowledges *content* exists and was stated.
+  return `You’ve put this into words: “${snippet}”.`;
+}
+
+const CLOSING_LINE = "We’ll leave it there. You can start another session if and when you choose.";
 
 export async function POST(req: Request) {
   try {
@@ -51,32 +68,34 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Unknown tool" }, { status: 400 });
     }
 
-    // ✅ Session start: do NOT throw if missing.
-    // If the client doesn't send it for some reason, we safely infer it.
+    // Session start (optional): if missing, infer now (avoid hard failure)
     const sessionStartMs =
       typeof body.sessionStartMs === "number" && Number.isFinite(body.sessionStartMs)
         ? body.sessionStartMs
         : nowMs();
 
-    // ✅ Enforce 15-minute timer server-side (prevents client bypass)
+    // Server-side timer enforcement
     const deadline = sessionStartMs + msFromMinutes(SESSION_MINUTES);
-    if (nowMs() >= deadline) {
+    const isTimeOver = nowMs() >= deadline;
+
+    // Server-side message limit enforcement
+    const count =
+      typeof body.userMessageCount === "number" && Number.isFinite(body.userMessageCount)
+        ? body.userMessageCount
+        : null;
+
+    const isFinalByCount = count !== null && count >= MAX_USER_MESSAGES;
+
+    // If time is already over, we close immediately with acknowledgement + closing
+    if (isTimeOver) {
       return NextResponse.json({
-        output: "We’ll leave it there. You can start another session if and when you choose.",
+        output: `${acknowledge(userText)}\n\n${CLOSING_LINE}`,
         closed: true,
         reason: "time",
       });
     }
 
-    // ✅ Enforce message cap server-side (prevents client bypass)
-    if (typeof body.userMessageCount === "number" && body.userMessageCount >= MAX_USER_MESSAGES) {
-      return NextResponse.json({
-        output: "We’ll leave it there. You can start another session if and when you choose.",
-        closed: true,
-        reason: "count",
-      });
-    }
-
+    // Normal model call
     const resp = await client.responses.create({
       model: process.env.OPENAI_MODEL || "gpt-5.2",
       input: [
@@ -85,18 +104,26 @@ export async function POST(req: Request) {
       ],
     });
 
+    const modelText = (resp.output_text ?? "").trim();
+
+    // If this is the final message by count, we append acknowledgement + closing
+    // and end the session immediately after the model response.
+    if (isFinalByCount) {
+      const ack = acknowledge(userText);
+      const output = `${modelText}\n\n${ack}\n\n${CLOSING_LINE}`.trim();
+      return NextResponse.json({
+        output,
+        closed: true,
+        reason: "count",
+      });
+    }
+
     return NextResponse.json({
-      output: resp.output_text ?? "",
+      output: modelText,
       closed: false,
-      sessionStartMs, // return for debugging if needed
     });
   } catch (err: any) {
-    // Helpful server logs without exposing secrets
     console.error("api/chat error:", err?.message || err);
-
-    return NextResponse.json(
-      { error: err?.message || "Server error" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: err?.message || "Server error" }, { status: 500 });
   }
 }

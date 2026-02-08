@@ -4,19 +4,15 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 type ChatMsg = { role: "user" | "assistant"; text: string };
 
-// ----------------------------
-// SETTINGS
-// ----------------------------
 const MAX_USER_MESSAGES = 8;
 const SESSION_MINUTES = 15;
 const COOLDOWN_HOURS = 24;
 
-// localStorage keys
 const LS_SESSION = "bt_expression_session_v1";
 const LS_COOLDOWN = "bt_expression_cooldown_v1";
 
 type StoredSession = {
-  startedAt: number | null; // set on first user send
+  startedAt: number | null;
   endedAt: number | null;
   userCount: number;
   log: ChatMsg[];
@@ -48,13 +44,10 @@ export default function ExpressionPage() {
 
   const [cooldownUntil, setCooldownUntil] = useState<number | null>(null);
 
-  // tick for timer
   const [, forceTick] = useState(0);
   const tickRef = useRef<number | null>(null);
 
-  // ----------------------------
-  // LOAD persisted state
-  // ----------------------------
+  // Load
   useEffect(() => {
     try {
       const rawSession = localStorage.getItem(LS_SESSION);
@@ -78,9 +71,7 @@ export default function ExpressionPage() {
     } catch {}
   }, []);
 
-  // ----------------------------
-  // PERSIST state
-  // ----------------------------
+  // Persist
   useEffect(() => {
     try {
       localStorage.setItem(LS_SESSION, JSON.stringify(session));
@@ -93,11 +84,9 @@ export default function ExpressionPage() {
     } catch {}
   }, [cooldownUntil]);
 
-  // ----------------------------
-  // TIMER tick every 1s while active
-  // ----------------------------
   const sessionActive = Boolean(session.startedAt && !session.endedAt);
 
+  // Tick timer
   useEffect(() => {
     if (!sessionActive) {
       if (tickRef.current) window.clearInterval(tickRef.current);
@@ -117,9 +106,6 @@ export default function ExpressionPage() {
     };
   }, [sessionActive]);
 
-  // ----------------------------
-  // derived state
-  // ----------------------------
   const isCooldownActive = useMemo(() => {
     if (!cooldownUntil) return false;
     return nowMs() < cooldownUntil;
@@ -166,42 +152,51 @@ export default function ExpressionPage() {
     return `Locked. Try again in ~${hours}h ${mins}m.`;
   }, [cooldownUntil]);
 
-  // ----------------------------
-  // end session + start cooldown
-  // ----------------------------
-  function endSessionAndCooldown(finalAssistantText?: string) {
+  function startCooldownAndEndSession() {
     const endedAt = nowMs();
     const until = endedAt + msFromHours(COOLDOWN_HOURS);
-
     setCooldownUntil(until);
 
-    setSession((prev) => {
-      const newLog = [...prev.log];
-      if (finalAssistantText) newLog.push({ role: "assistant", text: finalAssistantText });
-      return { ...prev, endedAt, log: newLog };
-    });
+    setSession((prev) => ({
+      ...prev,
+      endedAt,
+    }));
   }
 
-  // Auto-end on timer
+  // Auto-end on timer (UI side)
   useEffect(() => {
     if (sessionActive && sessionExpiredByTime && !session.endedAt) {
-      endSessionAndCooldown("We’ll leave it there. You can start another session if and when you choose.");
+      startCooldownAndEndSession();
+      setSession((prev) => ({
+        ...prev,
+        log: [
+          ...prev.log,
+          { role: "assistant", text: "We’ll leave it there. You can start another session if and when you choose." },
+        ],
+      }));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionActive, sessionExpiredByTime, session.endedAt]);
 
-  // ----------------------------
-  // Clear chat view (ends active session => prevents bypass)
-  // ----------------------------
   function clearChatView() {
+    // During an active session, clearing ends session + cooldown (prevents bypass)
     if (session.startedAt && !session.endedAt) {
-      endSessionAndCooldown("We’ll leave it there. You can start another session if and when you choose.");
+      setSession((prev) => ({
+        ...prev,
+        log: [
+          ...prev.log,
+          { role: "assistant", text: "We’ll leave it there. You can start another session if and when you choose." },
+        ],
+        endedAt: nowMs(),
+      }));
+      setCooldownUntil(nowMs() + msFromHours(COOLDOWN_HOURS));
       return;
     }
+
+    // Otherwise just clear visible log
     setSession((prev) => ({ ...prev, log: [] }));
   }
 
-  // Start a new session (only after cooldown)
   function startNewSession() {
     if (isCooldownActive) return;
 
@@ -225,9 +220,6 @@ export default function ExpressionPage() {
     </>
   );
 
-  // ----------------------------
-  // Send message
-  // ----------------------------
   async function send() {
     const userText = input.trim();
     if (!userText) return;
@@ -235,26 +227,20 @@ export default function ExpressionPage() {
 
     setInput("");
 
-    // Determine sessionStartMs BEFORE updating state, so we can send it reliably.
     const sessionStartMs = session.startedAt ?? nowMs();
+    const nextUserCount = session.userCount + 1;
 
-    // Update UI state first
-    setSession((prev) => {
-      const startedAt = prev.startedAt ?? sessionStartMs;
-      const newLog: ChatMsg[] = [...prev.log, { role: "user", text: userText }];
-      return {
-        ...prev,
-        startedAt,
-        log: newLog,
-        userCount: prev.userCount + 1,
-      };
-    });
+    // Update UI immediately
+    setSession((prev) => ({
+      ...prev,
+      startedAt: prev.startedAt ?? sessionStartMs,
+      userCount: prev.userCount + 1,
+      log: [...prev.log, { role: "user", text: userText }],
+    }));
 
     setSending(true);
 
     try {
-      const nextUserCount = session.userCount + 1;
-
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -262,9 +248,7 @@ export default function ExpressionPage() {
           tool: "expression",
           inviteCode: inviteCode.trim(),
           userText,
-          // ✅ this fixes your error:
           sessionStartMs,
-          // optional, so server can enforce limits too:
           userMessageCount: nextUserCount,
         }),
       });
@@ -281,20 +265,21 @@ export default function ExpressionPage() {
       const outputText: string = (data?.output ?? "").toString();
       const closed: boolean = Boolean(data?.closed);
 
+      // Add assistant response
       setSession((prev) => ({
         ...prev,
         log: [...prev.log, { role: "assistant", text: outputText || "(no response)" }],
       }));
 
-      // If server says session is closed, enforce cooldown immediately
+      // If server says closed, start cooldown WITHOUT adding another closing line
       if (closed) {
-        endSessionAndCooldown();
+        startCooldownAndEndSession();
         return;
       }
 
-      // If we hit local cap, end after reply
+      // UI-side safety end if needed
       if (nextUserCount >= MAX_USER_MESSAGES) {
-        endSessionAndCooldown("We’ll leave it there. You can start another session if and when you choose.");
+        startCooldownAndEndSession();
       }
     } catch {
       setSending(false);
