@@ -2,100 +2,64 @@ import OpenAI from "openai";
 import { NextResponse } from "next/server";
 import { PROMPTS } from "@/lib/prompts";
 
+const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+const MAX_USER_MESSAGES = 8;
+const MAX_SESSION_MS = 15 * 60 * 1000;
+
 type Body = {
   tool?: keyof typeof PROMPTS;
   inviteCode?: string;
   userText: string;
-  sessionStartMs?: number;
-  userMessageCount?: number;
+
+  // client-provided session tracking
+  userMessageCount?: number; // how many user messages have been sent in THIS session so far (before this one)
+  sessionStartMs?: number; // epoch ms at session start
 };
 
-const MAX_USER_MESSAGES = 8;
-const SESSION_MINUTES = 15;
-
-function nowMs() {
-  return Date.now();
-}
-
-function msFromMinutes(m: number) {
-  return m * 60 * 1000;
-}
-
-function acknowledge(userText: string) {
-  const cleaned = userText.replace(/\s+/g, " ").trim();
-  const snippet = cleaned.length > 90 ? cleaned.slice(0, 90) + "…" : cleaned;
-  return `You’ve put this into words: “${snippet}”.`;
-}
-
-const CLOSING_LINE = "We’ll leave it there. You can start another session if and when you choose.";
-
 export async function POST(req: Request) {
-  try {
-    const body = (await req.json()) as Body;
+  const body = (await req.json()) as Body;
 
-    const userText = (body.userText ?? "").trim();
-    if (!userText) return NextResponse.json({ error: "Empty message" }, { status: 400 });
+  const userText = body.userText?.trim();
+  if (!userText) return NextResponse.json({ error: "Empty message" }, { status: 400 });
 
-    if (process.env.INVITE_CODE && body.inviteCode !== process.env.INVITE_CODE) {
-      return NextResponse.json({ error: "Invalid invite code" }, { status: 401 });
-    }
-
-    const tool = body.tool ?? "expression";
-    const system = PROMPTS[tool];
-    if (!system) return NextResponse.json({ error: "Unknown tool" }, { status: 400 });
-
-    // ✅ IMPORTANT: read env + create client only at request time (runtime)
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) {
-      return NextResponse.json(
-        { error: "Server misconfigured: OPENAI_API_KEY missing" },
-        { status: 500 }
-      );
-    }
-
-    const client = new OpenAI({ apiKey, timeout: 20000 });
-
-    const sessionStartMs =
-      typeof body.sessionStartMs === "number" && Number.isFinite(body.sessionStartMs)
-        ? body.sessionStartMs
-        : nowMs();
-
-    const deadline = sessionStartMs + msFromMinutes(SESSION_MINUTES);
-    const isTimeOver = nowMs() >= deadline;
-
-    const count =
-      typeof body.userMessageCount === "number" && Number.isFinite(body.userMessageCount)
-        ? body.userMessageCount
-        : null;
-
-    const isFinalByCount = count !== null && count >= MAX_USER_MESSAGES;
-
-    if (isTimeOver) {
-      return NextResponse.json({
-        output: `${acknowledge(userText)}\n\n${CLOSING_LINE}`,
-        closed: true,
-        reason: "time",
-      });
-    }
-
-    const resp = await client.responses.create({
-      model: process.env.OPENAI_MODEL || "gpt-5.2",
-      input: [
-        { role: "system", content: system },
-        { role: "user", content: userText },
-      ],
-    });
-
-    const modelText = (resp.output_text ?? "").trim();
-
-    if (isFinalByCount) {
-      const output = `${modelText}\n\n${acknowledge(userText)}\n\n${CLOSING_LINE}`.trim();
-      return NextResponse.json({ output, closed: true, reason: "count" });
-    }
-
-    return NextResponse.json({ output: modelText, closed: false });
-  } catch (err: any) {
-    console.error("api/chat error:", err?.message || err);
-    return NextResponse.json({ error: err?.message || "Server error" }, { status: 500 });
+  if (process.env.INVITE_CODE && body.inviteCode !== process.env.INVITE_CODE) {
+    return NextResponse.json({ error: "Invalid invite code" }, { status: 401 });
   }
+
+  const tool = body.tool ?? "expression";
+  const systemBase = PROMPTS[tool];
+  if (!systemBase) return NextResponse.json({ error: "Unknown tool" }, { status: 400 });
+
+  const countBefore = body.userMessageCount ?? 0;
+  const startMs = body.sessionStartMs;
+
+  // If startMs missing, treat as client bug (prevents silent bypass)
+  if (!startMs) {
+    return NextResponse.json({ error: "Missing sessionStartMs" }, { status: 400 });
+  }
+
+  const now = Date.now();
+  const expiredByTime = now - startMs >= MAX_SESSION_MS;
+  const isFinalByCount = countBefore + 1 >= MAX_USER_MESSAGES;
+  const shouldEndNow = expiredByTime || isFinalByCount;
+
+  // Add a small system suffix ONLY when ending
+  const system = shouldEndNow ? `${systemBase}\n\nSESSION_END_NOW` : systemBase;
+
+  const resp = await client.responses.create({
+    model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
+    input: [
+      { role: "system", content: system },
+      { role: "user", content: userText },
+    ],
+  });
+
+  return NextResponse.json({
+    output: resp.output_text ?? "",
+    ended: shouldEndNow,
+    expiredByTime,
+    userMessagesUsed: countBefore + 1,
+    maxUserMessages: MAX_USER_MESSAGES,
+  });
 }
