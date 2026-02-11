@@ -5,7 +5,7 @@ import { useMemo, useState } from "react";
 type LogItem = { role: "user" | "assistant"; text: string };
 
 export default function DecisionPage() {
-  const [inviteCode, setInviteCode] = useState("test123");
+  const [inviteCode, setInviteCode] = useState(""); // user must type it
   const [sessionStartMs, setSessionStartMs] = useState<number>(() => Date.now());
   const [log, setLog] = useState<LogItem[]>([]);
   const [input, setInput] = useState("");
@@ -28,7 +28,6 @@ export default function DecisionPage() {
 
     setAuthError(null);
 
-    // MUST be count BEFORE we add this message
     const userMessageCountBeforeSend = userSentCount;
 
     setInput("");
@@ -53,14 +52,12 @@ export default function DecisionPage() {
       if (res.status === 401) {
         setAuthError("Invalid invite code.");
         setSending(false);
-        // Remove the last user message from the UI log since it didn't actually run
         setLog((prev) => prev.slice(0, -1));
         return;
       }
 
       const reply = (data?.output ?? "").toString();
       setLog((prev) => [...prev, { role: "assistant", text: reply }]);
-
       if (data?.locked) setLocked(true);
     } catch {
       setLog((prev) => [

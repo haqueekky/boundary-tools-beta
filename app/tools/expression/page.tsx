@@ -5,7 +5,7 @@ import { useMemo, useState } from "react";
 type LogItem = { role: "user" | "assistant"; text: string };
 
 export default function ExpressionPage() {
-  const [inviteCode, setInviteCode] = useState("test123");
+  const [inviteCode, setInviteCode] = useState(""); // user must type it
   const [sessionStartMs, setSessionStartMs] = useState<number>(() => Date.now());
   const [log, setLog] = useState<LogItem[]>([]);
   const [input, setInput] = useState("");
@@ -28,7 +28,7 @@ export default function ExpressionPage() {
 
     setAuthError(null);
 
-    // MUST be count BEFORE we add this message
+    // count BEFORE we add this message
     const userMessageCountBeforeSend = userSentCount;
 
     setInput("");
@@ -53,8 +53,7 @@ export default function ExpressionPage() {
       if (res.status === 401) {
         setAuthError("Invalid invite code.");
         setSending(false);
-        // Remove the last user message from the UI log since it didn't actually run
-        setLog((prev) => prev.slice(0, -1));
+        setLog((prev) => prev.slice(0, -1)); // remove user msg that didn’t run
         return;
       }
 
@@ -145,7 +144,7 @@ export default function ExpressionPage() {
       >
         {log.length === 0 ? (
           <div style={{ opacity: 0.75 }}>
-            Write one thing you feel pressure to express, with no need to resolve it.
+            Write whatever feels unclear or uncertain.
           </div>
         ) : (
           log.map((m, i) => (
@@ -174,6 +173,7 @@ export default function ExpressionPage() {
             opacity: !canSend ? 0.7 : 1,
           }}
         />
+
         <button
           onClick={send}
           disabled={!canSend}
