@@ -5,16 +5,11 @@ import { PROMPTS } from "@/lib/prompts";
 const MAX_USER_MESSAGES = 8;
 const MAX_SESSION_MS = 15 * 60 * 1000; // 15 minutes
 
-const client = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-  timeout: 20000,
-});
-
 type Body = {
   tool?: keyof typeof PROMPTS;
-  inviteCode?: string;
   userText: string;
-  userMessageCount?: number;
+  inviteCode?: string;
+  userMessageCount?: number; // number of user messages already sent BEFORE this one
   sessionStartMs?: number;
 };
 
@@ -22,57 +17,87 @@ export async function POST(req: Request) {
   try {
     const body = (await req.json()) as Body;
 
-    if (!body.userText?.trim()) {
-      return NextResponse.json({ error: "Empty message" }, { status: 400 });
+    // --- Invite gate (server-side) ---
+    const requiredCode = process.env.INVITE_CODE || "test123";
+    const providedCode = (body.inviteCode ?? "").trim();
+
+    if (!providedCode || providedCode !== requiredCode) {
+      return NextResponse.json(
+        { output: "Invalid invite code." },
+        { status: 401 }
+      );
+    }
+
+    const userText = body.userText?.trim();
+    if (!userText) {
+      return NextResponse.json({ output: "Empty message." }, { status: 400 });
     }
 
     const tool = body.tool ?? "expression";
     const systemPrompt = PROMPTS[tool];
-
     if (!systemPrompt) {
-      return NextResponse.json({ error: "Unknown tool" }, { status: 400 });
+      return NextResponse.json({ output: "Unknown tool." }, { status: 400 });
+    }
+
+    const userCount = body.userMessageCount ?? 0;
+    const sessionStart = body.sessionStartMs;
+
+    if (!sessionStart) {
+      return NextResponse.json(
+        { output: "Error: Missing sessionStartMs" },
+        { status: 400 }
+      );
     }
 
     const now = Date.now();
-    const start = body.sessionStartMs ?? now;
-    const elapsed = now - start;
+    const timeExceeded = now - sessionStart >= MAX_SESSION_MS;
 
-    const userCount = body.userMessageCount ?? 0;
+    // If userCount === 7, this incoming message is the 8th
+    const messageExceeded = userCount === MAX_USER_MESSAGES - 1;
 
-    const limitReached =
-      userCount >= MAX_USER_MESSAGES || elapsed >= MAX_SESSION_MS;
+    const sessionEnding = timeExceeded || messageExceeded;
 
-    // If limit already reached BEFORE this message
-    if (limitReached) {
-      return NextResponse.json({
-        output:
-          "We’ll leave it there. You can start another session if and when you choose.",
-        locked: true,
-      });
+    const finalUserInput = sessionEnding
+      ? `${userText}\n\nSESSION_END_NOW`
+      : userText;
+
+    if (!process.env.OPENAI_API_KEY) {
+      console.error("OPENAI_API_KEY missing");
+      return NextResponse.json(
+        { output: "Server configuration error." },
+        { status: 500 }
+      );
     }
 
-    // If this message triggers the limit
-    const willBeFinal =
-      userCount + 1 >= MAX_USER_MESSAGES ||
-      elapsed >= MAX_SESSION_MS;
-
-    const finalFlag = willBeFinal ? "\n\nSESSION_END_NOW" : "";
+    const client = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+      timeout: 20000,
+    });
 
     const response = await client.responses.create({
       model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
       input: [
         { role: "system", content: systemPrompt },
-        { role: "user", content: body.userText + finalFlag },
+        { role: "user", content: finalUserInput },
       ],
     });
 
+    let output = response.output_text ?? "";
+
+    // Force spacing before the closing line if this is session end
+    if (sessionEnding) {
+      output = output.replace(
+        "We’ll leave it there. You can start another session if and when you choose.",
+        "\n\nWe’ll leave it there. You can start another session if and when you choose."
+      );
+    }
+
     return NextResponse.json({
-      output: response.output_text ?? "",
-      locked: willBeFinal,
-      sessionStartMs: start,
+      output,
+      locked: sessionEnding,
     });
   } catch (err) {
-    console.error("API error:", err);
-    return NextResponse.json({ error: "Server error" }, { status: 500 });
+    console.error("API ERROR:", err);
+    return NextResponse.json({ output: "Error: HTTP 500" }, { status: 500 });
   }
 }
