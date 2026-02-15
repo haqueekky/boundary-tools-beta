@@ -5,7 +5,7 @@ import { useMemo, useState } from "react";
 type LogItem = { role: "user" | "assistant"; text: string };
 
 export default function ExpressionPage() {
-  const [inviteCode, setInviteCode] = useState(""); // user must type it
+  const [inviteCode, setInviteCode] = useState("");
   const [sessionStartMs, setSessionStartMs] = useState<number>(() => Date.now());
   const [log, setLog] = useState<LogItem[]>([]);
   const [input, setInput] = useState("");
@@ -28,7 +28,8 @@ export default function ExpressionPage() {
 
     setAuthError(null);
 
-    // count BEFORE we add this message
+    // Capture history BEFORE adding this message (prevents duplication)
+    const historyBeforeSend = log;
     const userMessageCountBeforeSend = userSentCount;
 
     setInput("");
@@ -45,6 +46,7 @@ export default function ExpressionPage() {
           userText: text,
           userMessageCount: userMessageCountBeforeSend,
           sessionStartMs,
+          history: historyBeforeSend,
         }),
       });
 
@@ -61,10 +63,7 @@ export default function ExpressionPage() {
       setLog((prev) => [...prev, { role: "assistant", text: reply }]);
       if (data?.locked) setLocked(true);
     } catch {
-      setLog((prev) => [
-        ...prev,
-        { role: "assistant", text: "Error: Network error" },
-      ]);
+      setLog((prev) => [...prev, { role: "assistant", text: "Error: Network error" }]);
     } finally {
       setSending(false);
     }
@@ -143,9 +142,7 @@ export default function ExpressionPage() {
         }}
       >
         {log.length === 0 ? (
-          <div style={{ opacity: 0.75 }}>
-            Write whatever feels unclear or uncertain.
-          </div>
+          <div style={{ opacity: 0.75 }}>Write whatever feels unclear or uncertain.</div>
         ) : (
           log.map((m, i) => (
             <div key={i} style={{ marginBottom: 12 }}>

@@ -5,7 +5,7 @@ import { useMemo, useState } from "react";
 type LogItem = { role: "user" | "assistant"; text: string };
 
 export default function DecisionPage() {
-  const [inviteCode, setInviteCode] = useState(""); // user must type it
+  const [inviteCode, setInviteCode] = useState("");
   const [sessionStartMs, setSessionStartMs] = useState<number>(() => Date.now());
   const [log, setLog] = useState<LogItem[]>([]);
   const [input, setInput] = useState("");
@@ -28,6 +28,8 @@ export default function DecisionPage() {
 
     setAuthError(null);
 
+    // Capture history BEFORE adding this message (prevents duplication)
+    const historyBeforeSend = log;
     const userMessageCountBeforeSend = userSentCount;
 
     setInput("");
@@ -44,6 +46,7 @@ export default function DecisionPage() {
           userText: text,
           userMessageCount: userMessageCountBeforeSend,
           sessionStartMs,
+          history: historyBeforeSend,
         }),
       });
 
@@ -60,10 +63,7 @@ export default function DecisionPage() {
       setLog((prev) => [...prev, { role: "assistant", text: reply }]);
       if (data?.locked) setLocked(true);
     } catch {
-      setLog((prev) => [
-        ...prev,
-        { role: "assistant", text: "Error: Network error" },
-      ]);
+      setLog((prev) => [...prev, { role: "assistant", text: "Error: Network error" }]);
     } finally {
       setSending(false);
     }
@@ -84,11 +84,11 @@ export default function DecisionPage() {
       </h1>
 
       <div style={{ opacity: 0.75, marginBottom: 14, fontSize: 14, lineHeight: 1.5 }}>
-        A tightly bounded decision-reflection tool.
+        A tightly bounded decision-hygiene tool.
         <br />
         It does not advise, recommend, optimise, or decide.
         <br />
-        It reflects one key constraint, assumption, or trade-off already present.
+        It flags one missing decision element already present in how you’re framing it.
       </div>
 
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
