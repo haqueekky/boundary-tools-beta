@@ -4,6 +4,8 @@ import { useMemo, useState } from "react";
 
 type LogItem = { role: "user" | "assistant"; text: string };
 
+const MAX_USER_MESSAGES = 5;
+
 export default function DecisionPage() {
   const [inviteCode, setInviteCode] = useState("");
   const [sessionStartMs, setSessionStartMs] = useState<number>(() => Date.now());
@@ -28,8 +30,7 @@ export default function DecisionPage() {
 
     setAuthError(null);
 
-    // Capture history BEFORE adding this message (prevents duplication)
-    const historyBeforeSend = log;
+    // count BEFORE we add this message
     const userMessageCountBeforeSend = userSentCount;
 
     setInput("");
@@ -46,24 +47,43 @@ export default function DecisionPage() {
           userText: text,
           userMessageCount: userMessageCountBeforeSend,
           sessionStartMs,
-          history: historyBeforeSend,
         }),
       });
 
-      const data = await res.json();
+      let data: any = null;
+      try {
+        data = await res.json();
+      } catch {
+        data = null;
+      }
 
       if (res.status === 401) {
         setAuthError("Invalid invite code.");
         setSending(false);
-        setLog((prev) => prev.slice(0, -1));
+        setLog((prev) => prev.slice(0, -1)); // remove user msg that didn’t run
         return;
       }
 
-      const reply = (data?.output ?? "").toString();
+      if (!res.ok) {
+        const msg =
+          (typeof data?.output === "string" && data.output.trim()) ||
+          (typeof data?.error === "string" && `Error: ${data.error}`) ||
+          `Error: Server returned ${res.status}`;
+        setLog((prev) => [...prev, { role: "assistant", text: msg }]);
+        if (data?.locked) setLocked(true);
+        setSending(false);
+        return;
+      }
+
+      const reply = (data?.output ?? "").toString().trim();
       setLog((prev) => [...prev, { role: "assistant", text: reply }]);
+
       if (data?.locked) setLocked(true);
     } catch {
-      setLog((prev) => [...prev, { role: "assistant", text: "Error: Network error" }]);
+      setLog((prev) => [
+        ...prev,
+        { role: "assistant", text: "Error: Network error" },
+      ]);
     } finally {
       setSending(false);
     }
@@ -84,11 +104,11 @@ export default function DecisionPage() {
       </h1>
 
       <div style={{ opacity: 0.75, marginBottom: 14, fontSize: 14, lineHeight: 1.5 }}>
-        A tightly bounded decision-hygiene tool.
+        A tightly bounded decision-reflection tool.
         <br />
         It does not advise, recommend, optimise, or decide.
         <br />
-        It flags one missing decision element already present in how you’re framing it.
+        It reflects one key constraint, assumption, or trade-off already present.
       </div>
 
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
@@ -122,7 +142,7 @@ export default function DecisionPage() {
         </button>
 
         <div style={{ opacity: 0.7, fontSize: 14, alignSelf: "center" }}>
-          Messages: {userSentCount}/8
+          Messages: {userSentCount}/{MAX_USER_MESSAGES}
         </div>
       </div>
 

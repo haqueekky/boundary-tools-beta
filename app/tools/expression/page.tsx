@@ -13,11 +13,7 @@ export default function ExpressionPage() {
   const [locked, setLocked] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
 
-  const userSentCount = useMemo(
-    () => log.filter((m) => m.role === "user").length,
-    [log]
-  );
-
+  const userSentCount = useMemo(() => log.filter((m) => m.role === "user").length, [log]);
   const canSend = inviteCode.trim().length > 0 && !sending && !locked;
 
   async function send() {
@@ -28,8 +24,6 @@ export default function ExpressionPage() {
 
     setAuthError(null);
 
-    // Capture history BEFORE adding this message (prevents duplication)
-    const historyBeforeSend = log;
     const userMessageCountBeforeSend = userSentCount;
 
     setInput("");
@@ -46,20 +40,41 @@ export default function ExpressionPage() {
           userText: text,
           userMessageCount: userMessageCountBeforeSend,
           sessionStartMs,
-          history: historyBeforeSend,
         }),
       });
 
-      const data = await res.json();
+      let data: any = null;
+      try {
+        data = await res.json();
+      } catch {
+        data = null;
+      }
 
       if (res.status === 401) {
         setAuthError("Invalid invite code.");
+        setLog((prev) => prev.slice(0, -1));
         setSending(false);
-        setLog((prev) => prev.slice(0, -1)); // remove user msg that didn’t run
         return;
       }
 
-      const reply = (data?.output ?? "").toString();
+      if (!res.ok) {
+        const msg =
+          (typeof data?.output === "string" && data.output.trim()) ||
+          (typeof data?.error === "string" && `Error: ${data.error}`) ||
+          `Error: Server returned ${res.status}`;
+        setLog((prev) => [...prev, { role: "assistant", text: msg }]);
+        if (data?.locked) setLocked(true);
+        setSending(false);
+        return;
+      }
+
+      const reply = (typeof data?.output === "string" ? data.output : "").trim();
+      if (!reply) {
+        setLog((prev) => [...prev, { role: "assistant", text: "Error: Empty reply returned by server." }]);
+        setSending(false);
+        return;
+      }
+
       setLog((prev) => [...prev, { role: "assistant", text: reply }]);
       if (data?.locked) setLocked(true);
     } catch {
@@ -79,9 +94,7 @@ export default function ExpressionPage() {
 
   return (
     <main style={{ padding: 24, maxWidth: 900, margin: "0 auto", color: "white" }}>
-      <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 10 }}>
-        Expression Boundary
-      </h1>
+      <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 10 }}>Expression Boundary</h1>
 
       <div style={{ opacity: 0.75, marginBottom: 14, fontSize: 14, lineHeight: 1.5 }}>
         A tightly bounded reflection tool.
@@ -126,11 +139,7 @@ export default function ExpressionPage() {
         </div>
       </div>
 
-      {authError && (
-        <div style={{ marginBottom: 12, color: "#ffb3b3", fontSize: 14 }}>
-          {authError}
-        </div>
-      )}
+      {authError && <div style={{ marginBottom: 12, color: "#ffb3b3", fontSize: 14 }}>{authError}</div>}
 
       <div
         style={{
