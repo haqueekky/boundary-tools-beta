@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 
 type LogItem = { role: "user" | "assistant"; text: string };
 
-const MAX_USER_MESSAGES = 5;
+const MAX_MESSAGES = 5;
 
 export default function DecisionPage() {
   const [inviteCode, setInviteCode] = useState("");
@@ -14,6 +14,7 @@ export default function DecisionPage() {
   const [sending, setSending] = useState(false);
   const [locked, setLocked] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [apiError, setApiError] = useState<string | null>(null);
 
   const userSentCount = useMemo(
     () => log.filter((m) => m.role === "user").length,
@@ -29,6 +30,7 @@ export default function DecisionPage() {
     if (!text) return;
 
     setAuthError(null);
+    setApiError(null);
 
     const userMessageCountBeforeSend = userSentCount;
 
@@ -49,7 +51,7 @@ export default function DecisionPage() {
         }),
       });
 
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
 
       if (res.status === 401) {
         setAuthError("Invalid invite code.");
@@ -58,11 +60,24 @@ export default function DecisionPage() {
         return;
       }
 
+      if (!res.ok) {
+        const msg = (data?.error ?? data?.output ?? "API error").toString();
+        setApiError(`${res.status}: ${msg}`);
+        setSending(false);
+        return;
+      }
+
       const reply = (data?.output ?? "").toString();
+      if (!reply.trim()) {
+        setApiError("Empty reply from API.");
+        setSending(false);
+        return;
+      }
+
       setLog((prev) => [...prev, { role: "assistant", text: reply }]);
       if (data?.locked) setLocked(true);
     } catch {
-      setLog((prev) => [...prev, { role: "assistant", text: "Error: Network error" }]);
+      setApiError("Network error.");
     } finally {
       setSending(false);
     }
@@ -73,6 +88,7 @@ export default function DecisionPage() {
     setInput("");
     setLocked(false);
     setAuthError(null);
+    setApiError(null);
     setSessionStartMs(Date.now());
   }
 
@@ -87,7 +103,7 @@ export default function DecisionPage() {
         <br />
         It does not advise, recommend, optimise, or decide.
         <br />
-        It outputs one line: Constraint / Trade-off / Assumption.
+        It reflects one key constraint, assumption, or trade-off already present.
       </div>
 
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
@@ -121,13 +137,19 @@ export default function DecisionPage() {
         </button>
 
         <div style={{ opacity: 0.7, fontSize: 14, alignSelf: "center" }}>
-          Messages: {userSentCount}/{MAX_USER_MESSAGES}
+          Messages: {userSentCount}/{MAX_MESSAGES}
         </div>
       </div>
 
       {authError && (
-        <div style={{ marginBottom: 12, color: "#ffb3b3", fontSize: 14 }}>
+        <div style={{ marginBottom: 10, color: "#ffb3b3", fontSize: 14 }}>
           {authError}
+        </div>
+      )}
+
+      {apiError && (
+        <div style={{ marginBottom: 10, color: "#ffcf99", fontSize: 14 }}>
+          {apiError}
         </div>
       )}
 
@@ -142,7 +164,7 @@ export default function DecisionPage() {
       >
         {log.length === 0 ? (
           <div style={{ opacity: 0.75 }}>
-            State the decision in one sentence.
+            State the decision as you’re holding it right now (no need to solve it here).
           </div>
         ) : (
           log.map((m, i) => (
