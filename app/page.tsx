@@ -32,7 +32,7 @@ export default function HomePage() {
         >
           <div style={{ fontWeight: 700, marginBottom: 10 }}>What to expect</div>
           <ul style={{ margin: 0, paddingLeft: 18, opacity: 0.85, lineHeight: 1.7 }}>
-            <li>Short replies (1–3 sentences).</li>
+            <li>Short replies.</li>
             <li>Sessions end on purpose.</li>
             <li>Invite-only access.</li>
           </ul>

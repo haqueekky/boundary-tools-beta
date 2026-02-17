@@ -3,8 +3,6 @@ import { NextResponse } from "next/server";
 import { PROMPTS } from "@/lib/prompts";
 import crypto from "crypto";
 
-export const runtime = "nodejs";
-
 type Tool = keyof typeof PROMPTS;
 
 type Body = {
@@ -15,7 +13,7 @@ type Body = {
   sessionStartMs: number; // client-provided session start
 };
 
-const MAX_SESSION_MS = 15 * 60 * 1000;
+const MAX_SESSION_MS = 15 * 60 * 1000; // 15 minutes
 
 const MAX_USER_MESSAGES_BY_TOOL: Record<Tool, number> = {
   expression: 8,
@@ -33,7 +31,7 @@ const SIGNING_SECRET =
   process.env.BT_COOKIE_SECRET || process.env.INVITE_CODE || "dev-secret-change-me";
 
 type UsageState = {
-  day: string;
+  day: string; // YYYY-MM-DD (UTC)
   sessions: Record<Tool, number>;
   sig: string;
 };
@@ -47,7 +45,10 @@ function todayKeyUTC(): string {
 }
 
 function hmac(payload: string): string {
-  return crypto.createHmac("sha256", SIGNING_SECRET).update(payload).digest("base64url");
+  return crypto
+    .createHmac("sha256", SIGNING_SECRET)
+    .update(payload)
+    .digest("base64url");
 }
 
 function safeParseUsage(raw?: string | null): UsageState | null {
@@ -85,6 +86,7 @@ function getCookieValue(req: Request, name: string): string | null {
   return part.slice(name.length + 1);
 }
 
+// Defensive extraction for Responses API shapes
 function extractResponseText(response: any): string {
   const chunks: string[] = [];
 
@@ -99,12 +101,17 @@ function extractResponseText(response: any): string {
       if (!Array.isArray(content)) continue;
 
       for (const block of content) {
-        if (block?.type === "output_text" && typeof block?.text === "string" && block.text.trim()) {
-          chunks.push(block.text);
+        if (block?.type === "output_text" && typeof block?.text === "string") {
+          if (block.text.trim()) chunks.push(block.text);
           continue;
         }
         if (typeof block?.text === "string" && block.text.trim()) {
           chunks.push(block.text);
+          continue;
+        }
+        const nested = block?.output_text;
+        if (typeof nested === "string" && nested.trim()) {
+          chunks.push(nested);
           continue;
         }
         if (typeof block?.content === "string" && block.content.trim()) {
@@ -122,8 +129,8 @@ export async function POST(req: Request) {
   try {
     const body = (await req.json()) as Body;
 
-    if (!body?.userText?.trim()) {
-      return NextResponse.json({ output: "Error: Empty message", locked: false }, { status: 400 });
+    if (!body.userText?.trim()) {
+      return NextResponse.json({ error: "Empty message" }, { status: 400 });
     }
 
     if (process.env.INVITE_CODE && body.inviteCode !== process.env.INVITE_CODE) {
@@ -133,17 +140,23 @@ export async function POST(req: Request) {
     const tool = body.tool;
     const systemPrompt = PROMPTS[tool];
     if (!systemPrompt) {
-      return NextResponse.json({ output: "Error: Unknown tool", locked: false }, { status: 400 });
+      return NextResponse.json({ error: "Unknown tool" }, { status: 400 });
     }
 
+    // Session timer
     const now = Date.now();
     if (now - body.sessionStartMs > MAX_SESSION_MS) {
-      return NextResponse.json({ output: closeText("The session time limit has been reached."), locked: true });
+      return NextResponse.json({
+        output: closeText("The session time limit has been reached."),
+        locked: true,
+      });
     }
 
+    // Per-session message cap
     const maxUserMessages = MAX_USER_MESSAGES_BY_TOOL[tool] ?? 8;
     const isFinalMessage = body.userMessageCount + 1 >= maxUserMessages;
 
+    // Daily cap counts a session only on the first message in that session
     const isFirstUserMessage = body.userMessageCount === 0;
 
     const today = todayKeyUTC();
@@ -162,7 +175,10 @@ export async function POST(req: Request) {
       const current = usage.sessions[tool] ?? 0;
 
       if (current >= limit) {
-        return NextResponse.json({ output: closeText("Daily session limit reached."), locked: true });
+        return NextResponse.json({
+          output: closeText("Daily session limit reached."),
+          locked: true,
+        });
       }
 
       usage.sessions[tool] = current + 1;
@@ -172,16 +188,20 @@ export async function POST(req: Request) {
 
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey?.trim()) {
-      return NextResponse.json({ output: "Error: OPENAI_API_KEY missing", locked: false }, { status: 500 });
+      return NextResponse.json(
+        { error: "OPENAI_API_KEY missing" },
+        { status: 500 }
+      );
     }
 
+    // Create client INSIDE handler (avoids build-time env issues)
     const client = new OpenAI({ apiKey, timeout: 20000 });
     const model = process.env.OPENAI_MODEL || "gpt-4.1-mini";
 
     const response = await client.responses.create({
       model,
       temperature: 0.2,
-      max_output_tokens: 200,
+      max_output_tokens: tool === "decision" ? 90 : 160,
       input: [
         { role: "system", content: systemPrompt },
         { role: "user", content: body.userText },
@@ -190,7 +210,7 @@ export async function POST(req: Request) {
 
     let output = extractResponseText(response);
 
-    if (!output) {
+    if (!output.trim()) {
       const r = NextResponse.json(
         { output: "Error: Empty response from model.", locked: false },
         { status: 502 }
@@ -207,10 +227,11 @@ export async function POST(req: Request) {
       return r;
     }
 
+    // Server owns the closing block (prevents duplicates)
     if (isFinalMessage) {
-      output =
-        output.trim() +
-        "\n\nWe’ll leave it there.\n\nYou can start another session if and when you choose.";
+      output = output.trim() + "\n\n" + closeText("");
+      // closeText("") starts with newline-newline; clean it:
+      output = output.replace(/\n\n\s*\n\nWe’ll leave it there\./, "\n\nWe’ll leave it there.");
     }
 
     const resJson = NextResponse.json({ output, locked: isFinalMessage });
@@ -228,6 +249,6 @@ export async function POST(req: Request) {
     return resJson;
   } catch (error) {
     console.error("Route error:", error);
-    return NextResponse.json({ output: "Error: Server error", locked: false }, { status: 500 });
+    return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }

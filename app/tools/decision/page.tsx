@@ -30,7 +30,6 @@ export default function DecisionPage() {
 
     setAuthError(null);
 
-    // count BEFORE we add this message
     const userMessageCountBeforeSend = userSentCount;
 
     setInput("");
@@ -50,40 +49,20 @@ export default function DecisionPage() {
         }),
       });
 
-      let data: any = null;
-      try {
-        data = await res.json();
-      } catch {
-        data = null;
-      }
+      const data = await res.json();
 
       if (res.status === 401) {
         setAuthError("Invalid invite code.");
         setSending(false);
-        setLog((prev) => prev.slice(0, -1)); // remove user msg that didn’t run
+        setLog((prev) => prev.slice(0, -1));
         return;
       }
 
-      if (!res.ok) {
-        const msg =
-          (typeof data?.output === "string" && data.output.trim()) ||
-          (typeof data?.error === "string" && `Error: ${data.error}`) ||
-          `Error: Server returned ${res.status}`;
-        setLog((prev) => [...prev, { role: "assistant", text: msg }]);
-        if (data?.locked) setLocked(true);
-        setSending(false);
-        return;
-      }
-
-      const reply = (data?.output ?? "").toString().trim();
+      const reply = (data?.output ?? "").toString();
       setLog((prev) => [...prev, { role: "assistant", text: reply }]);
-
       if (data?.locked) setLocked(true);
     } catch {
-      setLog((prev) => [
-        ...prev,
-        { role: "assistant", text: "Error: Network error" },
-      ]);
+      setLog((prev) => [...prev, { role: "assistant", text: "Error: Network error" }]);
     } finally {
       setSending(false);
     }
@@ -108,7 +87,7 @@ export default function DecisionPage() {
         <br />
         It does not advise, recommend, optimise, or decide.
         <br />
-        It reflects one key constraint, assumption, or trade-off already present.
+        It outputs one line: Constraint / Trade-off / Assumption.
       </div>
 
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
@@ -163,7 +142,7 @@ export default function DecisionPage() {
       >
         {log.length === 0 ? (
           <div style={{ opacity: 0.75 }}>
-            State the decision as you’re holding it right now (no need to solve it here).
+            State the decision in one sentence.
           </div>
         ) : (
           log.map((m, i) => (

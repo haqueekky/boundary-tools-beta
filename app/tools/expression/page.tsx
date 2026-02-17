@@ -4,6 +4,8 @@ import { useMemo, useState } from "react";
 
 type LogItem = { role: "user" | "assistant"; text: string };
 
+const MAX_USER_MESSAGES = 8;
+
 export default function ExpressionPage() {
   const [inviteCode, setInviteCode] = useState("");
   const [sessionStartMs, setSessionStartMs] = useState<number>(() => Date.now());
@@ -13,7 +15,11 @@ export default function ExpressionPage() {
   const [locked, setLocked] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
 
-  const userSentCount = useMemo(() => log.filter((m) => m.role === "user").length, [log]);
+  const userSentCount = useMemo(
+    () => log.filter((m) => m.role === "user").length,
+    [log]
+  );
+
   const canSend = inviteCode.trim().length > 0 && !sending && !locked;
 
   async function send() {
@@ -43,38 +49,16 @@ export default function ExpressionPage() {
         }),
       });
 
-      let data: any = null;
-      try {
-        data = await res.json();
-      } catch {
-        data = null;
-      }
+      const data = await res.json();
 
       if (res.status === 401) {
         setAuthError("Invalid invite code.");
+        setSending(false);
         setLog((prev) => prev.slice(0, -1));
-        setSending(false);
         return;
       }
 
-      if (!res.ok) {
-        const msg =
-          (typeof data?.output === "string" && data.output.trim()) ||
-          (typeof data?.error === "string" && `Error: ${data.error}`) ||
-          `Error: Server returned ${res.status}`;
-        setLog((prev) => [...prev, { role: "assistant", text: msg }]);
-        if (data?.locked) setLocked(true);
-        setSending(false);
-        return;
-      }
-
-      const reply = (typeof data?.output === "string" ? data.output : "").trim();
-      if (!reply) {
-        setLog((prev) => [...prev, { role: "assistant", text: "Error: Empty reply returned by server." }]);
-        setSending(false);
-        return;
-      }
-
+      const reply = (data?.output ?? "").toString();
       setLog((prev) => [...prev, { role: "assistant", text: reply }]);
       if (data?.locked) setLocked(true);
     } catch {
@@ -94,14 +78,16 @@ export default function ExpressionPage() {
 
   return (
     <main style={{ padding: 24, maxWidth: 900, margin: "0 auto", color: "white" }}>
-      <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 10 }}>Expression Boundary</h1>
+      <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 10 }}>
+        Expression Boundary
+      </h1>
 
       <div style={{ opacity: 0.75, marginBottom: 14, fontSize: 14, lineHeight: 1.5 }}>
         A tightly bounded reflection tool.
         <br />
         It does not offer advice, reassurance, solutions, or validation.
         <br />
-        It reduces noise and clarifies what is already present.
+        It compresses what you wrote into one cleaner dynamic.
       </div>
 
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
@@ -135,11 +121,15 @@ export default function ExpressionPage() {
         </button>
 
         <div style={{ opacity: 0.7, fontSize: 14, alignSelf: "center" }}>
-          Messages: {userSentCount}/8
+          Messages: {userSentCount}/{MAX_USER_MESSAGES}
         </div>
       </div>
 
-      {authError && <div style={{ marginBottom: 12, color: "#ffb3b3", fontSize: 14 }}>{authError}</div>}
+      {authError && (
+        <div style={{ marginBottom: 12, color: "#ffb3b3", fontSize: 14 }}>
+          {authError}
+        </div>
+      )}
 
       <div
         style={{
@@ -151,7 +141,7 @@ export default function ExpressionPage() {
         }}
       >
         {log.length === 0 ? (
-          <div style={{ opacity: 0.75 }}>Write whatever feels unclear or uncertain.</div>
+          <div style={{ opacity: 0.75 }}>Write what feels unclear.</div>
         ) : (
           log.map((m, i) => (
             <div key={i} style={{ marginBottom: 12 }}>
