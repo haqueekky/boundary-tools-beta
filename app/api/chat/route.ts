@@ -38,9 +38,7 @@ const USAGE_COOKIE = "bt_usage_v1";
 
 // Used only to sign the cookie (no content stored).
 const SIGNING_SECRET =
-  process.env.BT_COOKIE_SECRET ||
-  process.env.INVITE_CODE ||
-  "dev-secret-change-me";
+  process.env.BT_COOKIE_SECRET || process.env.INVITE_CODE || "dev-secret-change-me";
 
 type UsageState = {
   day: string; // YYYY-MM-DD (UTC)
@@ -57,10 +55,7 @@ function todayKeyUTC(): string {
 }
 
 function hmac(payload: string): string {
-  return crypto
-    .createHmac("sha256", SIGNING_SECRET)
-    .update(payload)
-    .digest("base64url");
+  return crypto.createHmac("sha256", SIGNING_SECRET).update(payload).digest("base64url");
 }
 
 function safeParseUsage(raw?: string | null): UsageState | null {
@@ -100,25 +95,32 @@ function getCookieValue(req: Request, name: string): string | null {
 
 // Conservative mixed-language detection: only triggers on TWO different scripts
 function isMixedLanguageTwoScripts(text: string): boolean {
-  const hasLatin = /[A-Za-z]/.test(text) && (text.match(/[A-Za-z]/g)?.length ?? 0) >= 20;
+  const latinCount = (text.match(/[A-Za-z]/g) ?? []).length;
+  const hasLatin = latinCount >= 20;
 
   // Non-latin scripts (broad but safe)
-  const nonLatinMatches =
+  const nonLatinCount = (
     text.match(
       /[\u0E00-\u0E7F\u0400-\u04FF\u0600-\u06FF\u0590-\u05FF\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF]/g
-    ) ?? [];
-  const hasNonLatin = nonLatinMatches.length >= 10;
+    ) ?? []
+  ).length;
+
+  const hasNonLatin = nonLatinCount >= 10;
 
   return hasLatin && hasNonLatin;
 }
 
-// Bulletproof extraction for Responses API across variants
+/**
+ * Fix for duplication:
+ * - If response.output_text exists, use ONLY that (do not also parse response.output).
+ * - Otherwise parse response.output blocks.
+ * - Join with "\n" (not ""), and collapse accidental repeats.
+ */
 function extractResponseText(response: any): string {
-  const chunks: string[] = [];
+  const direct = typeof response?.output_text === "string" ? response.output_text.trim() : "";
+  if (direct) return direct;
 
-  if (typeof response?.output_text === "string" && response.output_text.trim()) {
-    chunks.push(response.output_text);
-  }
+  const chunks: string[] = [];
 
   const out = response?.output;
   if (Array.isArray(out)) {
@@ -127,31 +129,28 @@ function extractResponseText(response: any): string {
       if (!Array.isArray(content)) continue;
 
       for (const block of content) {
-        if (block?.type === "output_text" && typeof block?.text === "string") {
-          if (block.text.trim()) chunks.push(block.text);
+        if (block?.type === "output_text" && typeof block?.text === "string" && block.text.trim()) {
+          chunks.push(block.text.trim());
           continue;
         }
-
         if (typeof block?.text === "string" && block.text.trim()) {
-          chunks.push(block.text);
+          chunks.push(block.text.trim());
           continue;
         }
-
-        const nested = block?.output_text;
-        if (typeof nested === "string" && nested.trim()) {
-          chunks.push(nested);
+        if (typeof block?.output_text === "string" && block.output_text.trim()) {
+          chunks.push(block.output_text.trim());
           continue;
         }
-
         if (typeof block?.content === "string" && block.content.trim()) {
-          chunks.push(block.content);
+          chunks.push(block.content.trim());
           continue;
         }
       }
     }
   }
 
-  return chunks.join("").trim();
+  const joined = chunks.join("\n").trim();
+  return joined;
 }
 
 function stripClosingIfPresent(text: string): string {
@@ -163,6 +162,29 @@ function stripClosingIfPresent(text: string): string {
   let t = text;
   for (const p of patterns) t = t.replace(p, "");
   return t.trim();
+}
+
+// Final safety net: if the model output accidentally duplicates itself, collapse it.
+function collapseExactDuplication(text: string): string {
+  const t = text.trim();
+  if (!t) return t;
+
+  // Case 1: exact doubled string: "ABCABC"
+  if (t.length % 2 === 0) {
+    const half = t.slice(0, t.length / 2);
+    if (half === t.slice(t.length / 2)) return half.trim();
+  }
+
+  // Case 2: duplicated sentence with no separator (common)
+  // e.g. "You feel X.You feel X."
+  // We'll detect two identical halves split at the midpoint after removing whitespace.
+  const compact = t.replace(/\s+/g, "");
+  if (compact.length % 2 === 0) {
+    const half = compact.slice(0, compact.length / 2);
+    if (half === compact.slice(compact.length / 2)) return t.slice(0, Math.floor(t.length / 2)).trim();
+  }
+
+  return t;
 }
 
 export async function POST(req: Request) {
@@ -268,12 +290,10 @@ export async function POST(req: Request) {
 
     let output = extractResponseText(response);
     output = stripClosingIfPresent(output);
+    output = collapseExactDuplication(output);
 
     if (!output.trim()) {
-      const r = NextResponse.json(
-        { error: "Empty response from model", locked: false },
-        { status: 502 }
-      );
+      const r = NextResponse.json({ error: "Empty response from model", locked: false }, { status: 502 });
 
       if (setUsageCookie) {
         r.cookies.set(USAGE_COOKIE, setUsageCookie, {
