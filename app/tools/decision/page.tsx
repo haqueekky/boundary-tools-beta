@@ -47,7 +47,7 @@ export default function DecisionPage() {
           inviteCode: inviteCode.trim(),
           userText: text,
           userMessageCount: userMessageCountBeforeSend,
-          sessionStartMs,
+          sessionStartMs, // keep sending for compatibility; route should ignore if time limit removed
         }),
       });
 
@@ -101,9 +101,9 @@ export default function DecisionPage() {
       <div style={{ opacity: 0.75, marginBottom: 14, fontSize: 14, lineHeight: 1.5 }}>
         A tightly bounded decision-reflection tool.
         <br />
-        It does not advise, recommend, optimise, or decide.
+        No advice. No recommendations. No optimisation.
         <br />
-        It reflects one key constraint, assumption, or trade-off already present.
+        It surfaces one constraint, assumption, or trade-off shaping the decision.
       </div>
 
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
@@ -133,7 +133,7 @@ export default function DecisionPage() {
             cursor: "pointer",
           }}
         >
-          New session
+          Reset
         </button>
 
         <div style={{ opacity: 0.7, fontSize: 14, alignSelf: "center" }}>
@@ -163,9 +163,7 @@ export default function DecisionPage() {
         }}
       >
         {log.length === 0 ? (
-          <div style={{ opacity: 0.75 }}>
-            State the decision as you’re holding it right now (no need to solve it here).
-          </div>
+          <div style={{ opacity: 0.75 }}>State the decision in one sentence.</div>
         ) : (
           log.map((m, i) => (
             <div key={i} style={{ marginBottom: 12 }}>
@@ -180,7 +178,7 @@ export default function DecisionPage() {
         <textarea
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder={locked ? "Session ended." : "Type…"}
+          placeholder={locked ? "Limit reached." : "Decision…"}
           rows={3}
           disabled={!canSend}
           style={{

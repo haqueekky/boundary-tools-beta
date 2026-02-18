@@ -16,11 +16,9 @@ type Body = {
   // count BEFORE this message
   userMessageCount: number;
 
-  // client-provided session start
+  // kept for compatibility with your pages; NOT used (time limit removed)
   sessionStartMs: number;
 };
-
-const MAX_SESSION_MS = 15 * 60 * 1000; // 15 minutes
 
 // Per-session message limits (user messages)
 const MAX_USER_MESSAGES_BY_TOOL: Record<Tool, number> = {
@@ -98,7 +96,6 @@ function isMixedLanguageTwoScripts(text: string): boolean {
   const latinCount = (text.match(/[A-Za-z]/g) ?? []).length;
   const hasLatin = latinCount >= 20;
 
-  // Non-latin scripts (broad but safe)
   const nonLatinCount = (
     text.match(
       /[\u0E00-\u0E7F\u0400-\u04FF\u0600-\u06FF\u0590-\u05FF\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF]/g
@@ -117,7 +114,8 @@ function isMixedLanguageTwoScripts(text: string): boolean {
  * - Join with "\n" (not ""), and collapse accidental repeats.
  */
 function extractResponseText(response: any): string {
-  const direct = typeof response?.output_text === "string" ? response.output_text.trim() : "";
+  const direct =
+    typeof response?.output_text === "string" ? response.output_text.trim() : "";
   if (direct) return direct;
 
   const chunks: string[] = [];
@@ -129,7 +127,11 @@ function extractResponseText(response: any): string {
       if (!Array.isArray(content)) continue;
 
       for (const block of content) {
-        if (block?.type === "output_text" && typeof block?.text === "string" && block.text.trim()) {
+        if (
+          block?.type === "output_text" &&
+          typeof block?.text === "string" &&
+          block.text.trim()
+        ) {
           chunks.push(block.text.trim());
           continue;
         }
@@ -149,8 +151,7 @@ function extractResponseText(response: any): string {
     }
   }
 
-  const joined = chunks.join("\n").trim();
-  return joined;
+  return chunks.join("\n").trim();
 }
 
 function stripClosingIfPresent(text: string): string {
@@ -175,13 +176,13 @@ function collapseExactDuplication(text: string): string {
     if (half === t.slice(t.length / 2)) return half.trim();
   }
 
-  // Case 2: duplicated sentence with no separator (common)
-  // e.g. "You feel X.You feel X."
-  // We'll detect two identical halves split at the midpoint after removing whitespace.
+  // Case 2: duplicated content with whitespace differences
   const compact = t.replace(/\s+/g, "");
   if (compact.length % 2 === 0) {
     const half = compact.slice(0, compact.length / 2);
-    if (half === compact.slice(compact.length / 2)) return t.slice(0, Math.floor(t.length / 2)).trim();
+    if (half === compact.slice(compact.length / 2)) {
+      return t.slice(0, Math.floor(t.length / 2)).trim();
+    }
   }
 
   return t;
@@ -205,15 +206,6 @@ export async function POST(req: Request) {
     const systemPrompt = PROMPTS[tool];
     if (!systemPrompt) {
       return NextResponse.json({ error: "Unknown tool" }, { status: 400 });
-    }
-
-    // Session timer
-    const now = Date.now();
-    if (now - body.sessionStartMs > MAX_SESSION_MS) {
-      return NextResponse.json({
-        output: closeText("The session time limit has been reached."),
-        locked: true,
-      });
     }
 
     // Per-session message cap
@@ -293,7 +285,10 @@ export async function POST(req: Request) {
     output = collapseExactDuplication(output);
 
     if (!output.trim()) {
-      const r = NextResponse.json({ error: "Empty response from model", locked: false }, { status: 502 });
+      const r = NextResponse.json(
+        { error: "Empty response from model", locked: false },
+        { status: 502 }
+      );
 
       if (setUsageCookie) {
         r.cookies.set(USAGE_COOKIE, setUsageCookie, {
@@ -309,7 +304,9 @@ export async function POST(req: Request) {
     }
 
     if (isFinalMessage) {
-      output = output.trim() + "\n\nWe’ll leave it there.\n\nYou can start another session if and when you choose.";
+      output =
+        output.trim() +
+        "\n\nWe’ll leave it there.\n\nYou can start another session if and when you choose.";
     }
 
     const resJson = NextResponse.json({ output, locked: isFinalMessage });
