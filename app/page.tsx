@@ -1,78 +1,79 @@
 import Link from "next/link";
 
 export default function HomePage() {
+  const cardStyle: React.CSSProperties = {
+    border: "1px solid #333",
+    borderRadius: 14,
+    padding: 16,
+    background: "transparent",
+    color: "white",
+    textDecoration: "none",
+    display: "block",
+  };
+
+  const gridStyle: React.CSSProperties = {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+    gap: 14,
+    marginTop: 16,
+  };
+
+  const smallStyle: React.CSSProperties = {
+    opacity: 0.8,
+    lineHeight: 1.5,
+    fontSize: 14,
+  };
+
   return (
-    <main
-      style={{
-        minHeight: "100vh",
-        padding: "56px 24px",
-        background: "#0b0b0b",
-        color: "white",
-      }}
-    >
-      <div style={{ maxWidth: 980, margin: "0 auto" }}>
-        <h1 style={{ fontSize: 46, fontWeight: 800, letterSpacing: -0.5, margin: 0 }}>
-          Boundary Tools — Beta
-        </h1>
-
-        <p style={{ marginTop: 12, opacity: 0.82, maxWidth: 820, lineHeight: 1.6 }}>
-          Invite-only, deliberately limited tools. No advice. No “next steps”. No memory.
-          Designed to reduce avoidable mistakes by keeping the space narrow and contained.
-        </p>
-
-        <div
-          style={{
-            marginTop: 22,
-            border: "1px solid rgba(255,255,255,0.14)",
-            background: "rgba(255,255,255,0.03)",
-            borderRadius: 16,
-            padding: 18,
-            maxWidth: 820,
-          }}
-        >
-          <div style={{ fontWeight: 700, marginBottom: 10 }}>What to expect</div>
-          <ul style={{ margin: 0, paddingLeft: 18, opacity: 0.85, lineHeight: 1.7 }}>
-            <li>Short replies (1–2 sentences).</li>
-            <li>Sessions end on purpose.</li>
-            <li>Invite-only access.</li>
-          </ul>
+    <main style={{ padding: 24, maxWidth: 980, margin: "0 auto", color: "white" }}>
+      <div style={{ marginBottom: 10, opacity: 0.85 }}>
+        <div style={{ fontSize: 14, letterSpacing: 0.2 }}>
+          A short, deliberate pause before you commit.
         </div>
+      </div>
 
-        <div style={{ marginTop: 22, display: "flex", gap: 12, flexWrap: "wrap" }}>
-          <Link
-            href="/tools/expression"
-            style={{
-              display: "inline-block",
-              padding: "12px 16px",
-              borderRadius: 12,
-              border: "1px solid rgba(255,255,255,0.22)",
-              color: "white",
-              textDecoration: "none",
-              fontWeight: 700,
-            }}
-          >
-            Open Expression
-          </Link>
+      <div style={{ fontSize: 24, fontWeight: 800, marginBottom: 6 }}>
+        Boundary Tools
+      </div>
 
-          <Link
-            href="/tools/decision"
-            style={{
-              display: "inline-block",
-              padding: "12px 16px",
-              borderRadius: 12,
-              border: "1px solid rgba(255,255,255,0.22)",
-              color: "white",
-              textDecoration: "none",
-              fontWeight: 700,
-            }}
-          >
-            Open Decision Boundary
-          </Link>
-        </div>
+      <div style={{ ...smallStyle, maxWidth: 820 }}>
+        Deliberately constrained tools. No advice. No reassurance. No memory. Each tool does
+        one narrow thing.
+      </div>
 
-        <p style={{ marginTop: 14, opacity: 0.75 }}>
-          If you were given an invite code, you’ll enter it inside the tool.
-        </p>
+      <div style={gridStyle}>
+        <Link href="/tools/expression" style={cardStyle}>
+          <div style={{ fontWeight: 800, marginBottom: 6 }}>Expression Boundary</div>
+          <div style={smallStyle}>
+            Sharpens what’s unclear or conflicted without steering you.
+          </div>
+        </Link>
+
+        <Link href="/tools/decision" style={cardStyle}>
+          <div style={{ fontWeight: 800, marginBottom: 6 }}>Decision Boundary</div>
+          <div style={smallStyle}>
+            Surfaces one constraint, trade-off, or assumption in the decision frame.
+          </div>
+        </Link>
+
+        <Link href="/tools/quietreflection" style={cardStyle}>
+          <div style={{ fontWeight: 800, marginBottom: 6 }}>Quiet Reflection</div>
+          <div style={smallStyle}>
+            Lowers heat and reduces escalation in workplace situations—without advice.
+          </div>
+        </Link>
+
+        <Link href="/tools/assumption" style={cardStyle}>
+          <div style={{ fontWeight: 800, marginBottom: 6 }}>Assumption Boundary</div>
+          <div style={smallStyle}>
+            Paste text (≤800 words). Separates facts, assumptions/inferences, and ambiguities.
+          </div>
+        </Link>
+      </div>
+
+      <div style={{ marginTop: 18, ...smallStyle, maxWidth: 820 }}>
+        If you want answers, guidance, or a conversation, these tools will feel “too small.”
+        That constraint is the point.
       </div>
     </main>
   );

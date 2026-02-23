@@ -61,8 +61,7 @@ export default function ExpressionPage() {
       }
 
       if (!res.ok) {
-        const msg =
-          (data?.error ?? data?.output ?? "API error").toString();
+        const msg = (data?.error ?? data?.output ?? "API error").toString();
         setApiError(`${res.status}: ${msg}`);
         setSending(false);
         return;
@@ -102,9 +101,7 @@ export default function ExpressionPage() {
       <div style={{ opacity: 0.75, marginBottom: 14, fontSize: 14, lineHeight: 1.5 }}>
         A tightly bounded reflection tool.
         <br />
-        It does not offer advice, reassurance, solutions, or validation.
-        <br />
-        It reduces noise and clarifies what is already present.
+        It sharpens what you mean without advice, reassurance, or editing.
       </div>
 
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
@@ -165,7 +162,7 @@ export default function ExpressionPage() {
       >
         {log.length === 0 ? (
           <div style={{ opacity: 0.75 }}>
-            Write whatever feels unclear or uncertain.
+            State what is unclear, conflicted, or unstable in the situation.
           </div>
         ) : (
           log.map((m, i) => (

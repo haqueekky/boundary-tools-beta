@@ -4,9 +4,9 @@ import { useMemo, useState } from "react";
 
 type LogItem = { role: "user" | "assistant"; text: string };
 
-const MAX_MESSAGES = 5;
+const MAX_MESSAGES = 3;
 
-export default function DecisionPage() {
+export default function QuietReflectionPage() {
   const [inviteCode, setInviteCode] = useState("");
   const [sessionStartMs, setSessionStartMs] = useState<number>(() => Date.now());
   const [log, setLog] = useState<LogItem[]>([]);
@@ -43,7 +43,7 @@ export default function DecisionPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          tool: "decision",
+          tool: "quietReflection",
           inviteCode: inviteCode.trim(),
           userText: text,
           userMessageCount: userMessageCountBeforeSend,
@@ -95,13 +95,13 @@ export default function DecisionPage() {
   return (
     <main style={{ padding: 24, maxWidth: 900, margin: "0 auto", color: "white" }}>
       <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 10 }}>
-        Decision Boundary
+        Quiet Reflection
       </h1>
 
       <div style={{ opacity: 0.75, marginBottom: 14, fontSize: 14, lineHeight: 1.5 }}>
-        A tightly bounded decision hygiene tool.
+        A tightly bounded containment pause for workplace pressure.
         <br />
-        It surfaces one constraint, trade-off, or assumption—nothing more.
+        It reduces escalation by lowering heat—without advice or strategy.
       </div>
 
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
@@ -162,7 +162,7 @@ export default function DecisionPage() {
       >
         {log.length === 0 ? (
           <div style={{ opacity: 0.75 }}>
-            Frame the decision in one sentence.
+            State what you are about to send, say, or do at work—without explaining the backstory.
           </div>
         ) : (
           log.map((m, i) => (

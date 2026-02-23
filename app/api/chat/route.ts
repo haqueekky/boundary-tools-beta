@@ -24,12 +24,16 @@ type Body = {
 const MAX_USER_MESSAGES_BY_TOOL: Record<Tool, number> = {
   expression: 8,
   decision: 5,
+  quietReflection: 3,
+  assumption: 1,
 };
 
 // Daily session caps (per tool)
 const DAILY_SESSIONS_BY_TOOL: Record<Tool, number> = {
   expression: 1,
   decision: 3,
+  quietReflection: 1,
+  assumption: 3,
 };
 
 const USAGE_COOKIE = "bt_usage_v1";
@@ -188,6 +192,12 @@ function collapseExactDuplication(text: string): string {
   return t;
 }
 
+function countWords(s: string): number {
+  const cleaned = s.trim();
+  if (!cleaned) return 0;
+  return cleaned.split(/\s+/).filter(Boolean).length;
+}
+
 export async function POST(req: Request) {
   try {
     const body = (await req.json()) as Body;
@@ -208,6 +218,17 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Unknown tool" }, { status: 400 });
     }
 
+    // Tool-specific input validation
+    if (tool === "assumption") {
+      const wc = countWords(userText);
+      if (wc > 800) {
+        return NextResponse.json(
+          { output: closeText("Text too long (max 800 words)."), locked: true },
+          { status: 413 }
+        );
+      }
+    }
+
     // Per-session message cap
     const maxUserMessages = MAX_USER_MESSAGES_BY_TOOL[tool] ?? 8;
     const isFinalMessage = body.userMessageCount + 1 >= maxUserMessages;
@@ -221,7 +242,12 @@ export async function POST(req: Request) {
 
     let usage = safeParseUsage(decoded);
     if (!usage || usage.day !== today) {
-      usage = makeUsageState(today, { expression: 0, decision: 0 });
+      usage = makeUsageState(today, {
+        expression: 0,
+        decision: 0,
+        quietReflection: 0,
+        assumption: 0,
+      });
     }
 
     let setUsageCookie: string | null = null;
@@ -245,7 +271,10 @@ export async function POST(req: Request) {
     // Mixed-language check (server-side, conservative)
     if (isMixedLanguageTwoScripts(userText)) {
       const res = NextResponse.json({
-        output: "You’re mixing languages. Which language would you like to use for this session?",
+        output:
+          tool === "assumption"
+            ? "You're mixing languages. Which language should be used for this analysis?"
+            : "You're mixing languages. Which language would you like to use for this session?",
         locked: false,
       });
 
@@ -270,10 +299,17 @@ export async function POST(req: Request) {
     const client = new OpenAI({ apiKey, timeout: 20000 });
     const model = process.env.OPENAI_MODEL || "gpt-4.1-mini";
 
+    const maxTokensByTool: Record<Tool, number> = {
+      expression: 140,
+      decision: 90,
+      quietReflection: 120,
+      assumption: 700,
+    };
+
     const response = await client.responses.create({
       model,
       temperature: 0.2,
-      max_output_tokens: tool === "decision" ? 90 : 140,
+      max_output_tokens: maxTokensByTool[tool] ?? 140,
       input: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userText },

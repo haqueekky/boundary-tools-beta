@@ -4,9 +4,9 @@ import { useMemo, useState } from "react";
 
 type LogItem = { role: "user" | "assistant"; text: string };
 
-const MAX_MESSAGES = 5;
+const MAX_MESSAGES = 1;
 
-export default function DecisionPage() {
+export default function AssumptionPage() {
   const [inviteCode, setInviteCode] = useState("");
   const [sessionStartMs, setSessionStartMs] = useState<number>(() => Date.now());
   const [log, setLog] = useState<LogItem[]>([]);
@@ -43,7 +43,7 @@ export default function DecisionPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          tool: "decision",
+          tool: "assumption",
           inviteCode: inviteCode.trim(),
           userText: text,
           userMessageCount: userMessageCountBeforeSend,
@@ -95,13 +95,13 @@ export default function DecisionPage() {
   return (
     <main style={{ padding: 24, maxWidth: 900, margin: "0 auto", color: "white" }}>
       <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 10 }}>
-        Decision Boundary
+        Assumption Boundary
       </h1>
 
       <div style={{ opacity: 0.75, marginBottom: 14, fontSize: 14, lineHeight: 1.5 }}>
-        A tightly bounded decision hygiene tool.
+        Paste text (max 800 words).
         <br />
-        It surfaces one constraint, trade-off, or assumption—nothing more.
+        The tool separates facts, assumptions/inferences, and ambiguities—no commentary.
       </div>
 
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
@@ -162,7 +162,7 @@ export default function DecisionPage() {
       >
         {log.length === 0 ? (
           <div style={{ opacity: 0.75 }}>
-            Frame the decision in one sentence.
+            Paste the excerpt you want separated into facts vs assumptions (≤800 words).
           </div>
         ) : (
           log.map((m, i) => (
@@ -178,8 +178,8 @@ export default function DecisionPage() {
         <textarea
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder={locked ? "Session ended." : "Type…"}
-          rows={3}
+          placeholder={locked ? "Session ended." : "Paste text…"}
+          rows={8}
           disabled={!canSend}
           style={{
             padding: "10px 12px",
@@ -203,6 +203,8 @@ export default function DecisionPage() {
             color: !canSend ? "#bbb" : "black",
             cursor: !canSend ? "not-allowed" : "pointer",
             fontWeight: 700,
+            height: 48,
+            alignSelf: "flex-start",
           }}
         >
           {sending ? "Sending…" : "Send"}
